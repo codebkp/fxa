@@ -42,6 +42,7 @@ module.exports = function (
   );
   const oauth = require('./oauth')(log, config, oauthdb, db, mailer, devicesImpl);
   const devicesSessions = require('./devices-and-sessions')(log, db, config, customs, push, pushbox, devicesImpl, oauthdb);
+  const attachedClients = require('./attached-clientss')(log, db, config, devicesImpl, oauthdb);
   const emails = require('./emails')(log, db, mailer, config, customs, push, verificationReminders);
   const password = require('./password')(
     log,
@@ -78,6 +79,7 @@ module.exports = function (
     account,
     oauth,
     devicesSessions,
+    attachedClients,
     emails,
     password,
     recoveryCodes,

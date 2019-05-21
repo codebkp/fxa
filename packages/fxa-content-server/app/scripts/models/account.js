@@ -19,6 +19,7 @@ import ResumeTokenMixin from './mixins/resume-token';
 import SignInReasons from '../lib/sign-in-reasons';
 import UserAgent from '../lib/user-agent';
 import vat from '../lib/vat';
+import AttachedClient from './attached-client';
 
 // Account attributes that can be persisted
 const PERSISTENT = {
@@ -923,27 +924,75 @@ const Account = Backbone.Model.extend({
   },
 
   /**
-     * Fetch the account's device list and populate into the collection
+     * Fetch the account's list of attached clients.
      *
-     * @returns {Promise} - resolves when complete
+     * @returns {Promise} - resolves with a list of `AttachedClient` models when complete.
+     *
+     * XXX TODO: as follow-up work, we can remove the three `fetchAccountX`
+     * methods below, which are subsumed by this new method. It has to wait
+     * until successful rollout of the new combined route.
      */
-  fetchDevices () {
-    return this._fxaClient.deviceList(this.get('sessionToken'))
-      .then((devices) => {
-        devices.map((item) => {
-          item.clientType = Constants.CLIENT_TYPE_DEVICE;
+  fetchAttachedClents() {
+    return this._fxaClient.connectedClientsList(this.get('sessionToken'))
+      .then((clients) => {
+        clients.forEach((client) => {
+          if (client.deviceId) {
+            client.clientType = Constants.CLIENT_TYPE_DEVICE;
+          } else if (client.clientId) {
+            client.clientType = Constants.CLIENT_TYPE_OAUTH_APP;
+          } else {
+            client.clientType = Constants.CLIENT_TYPE_WEB_SESSION;
+          }
         });
-
-        return devices;
+        return clients;
+      })
+      .catch((err) => {
+        console.log(err);
+        /// XXX TODO: re-throw if it wasn't a 404.
+        return Promise.all([
+          this.fetchAttachedClientDevicesAndSessions(),
+          this.fetchAttachedClientOAuthApps(),
+        ]).then(([devicesAndSessions, oauthApps]) => {
+          return [...devicesAndSessions, ...oauthApps];
+        });
       });
   },
 
   /**
-     * Fetch the account's OAuth Apps and populate into the collection
+     * Fetch the account's devices + sessions, as a list of AttachedClient attributes sets.
      *
      * @returns {Promise} resolves when the action completes
      */
-  fetchOAuthApps () {
+  fetchAttachedClientDevicesAndSessions () {
+    return this._fxaClient.sessions(this.get('sessionToken'))
+      .then((sessions) => {
+        return sessions.map((item) => {
+          return {
+            approximateLastAccessTime: item.approximateLastAccessTime,
+            approximateLastAccessTimeFormatted: item.approximateLastAccessTimeFormatted,
+            clientType: item.isDevice ? Constants.CLIENT_TYPE_DEVICE : Constants.CLIENT_TYPE_WEB_SESSION,
+            deviceId: item.deviceId,
+            deviceType: item.deviceType,
+            genericOS: UserAgent.toGenericOSName(item.os),
+            isCurrentSession: item.isCurrentDevice,
+            lastAccessTime: item.lastAccessTime,
+            lastAccessTimeFormatted: item.lastAccessTimeFormatted,
+            location: item.location,
+            name: item.deviceName,
+            os: item.os,
+            sessionTokenId: item.id,
+            userAgent: item.userAgent,
+          };
+        });
+      });
+  },
+
+  /**
+   * Fetch the account's OAuth Apps, as a list of AttachedClient attributes sets.
+   *
+   * @returns {Promise} resolves when the action completes
+   */
+  fetchAttachedClientOAuthApps() {
     return this._oAuthClient.fetchOAuthApps(this.get('accessToken'))
       .catch((err) => {
         if (OAuthErrors.is(err, 'UNAUTHORIZED')) {
@@ -957,40 +1006,43 @@ const Account = Backbone.Model.extend({
         throw err;
       })
       .then((oAuthApps) => {
-        oAuthApps.map((item) => {
-          item.clientType = Constants.CLIENT_TYPE_OAUTH_APP;
-          item.isOAuthApp = true;
+        return oAuthApps.map((item) => {
+          return {
+            clientId: item.id,
+            clientType: Constants.CLIENT_TYPE_OAUTH_APP,
+            lastAccessTime: item.lastAccessTime,
+            lastAccessTimeFormatted: item.lastAccessTimeFormatted,
+            name: item.name,
+            scope: item.scope,
+          };
         });
-
-        return oAuthApps;
       });
   },
 
   /**
-     * Fetch the account's sessions + devices, populate into the collection
-     *
-     * @returns {Promise} resolves when the action completes
-     */
-  fetchSessions () {
-    return this._fxaClient.sessions(this.get('sessionToken'))
-      .then((sessions) => {
-        sessions.map((item) => {
-          if (item.isDevice) {
-            item.clientType = Constants.CLIENT_TYPE_DEVICE;
-            // override the item id as deviceId for consistency
-            // if you ever need the tokenId just add it here with a different name
-            item.id = item.deviceId;
-            item.name = item.deviceName;
-            item.type = item.deviceType;
-          } else {
-            item.clientType = Constants.CLIENT_TYPE_WEB_SESSION;
-            item.isWebSession = true;
-          }
+   * Disconnect a client from the account
+   *
+   * @param {Object} client - AttachedClient model to remove
+   * @returns {Promise} - resolves when complete
+   *
+   * XXX TODO: as follow-up work, we can remove the three `destroyX`
+   * methods below, which are subsumed by this new method. It has to wait
+   * until successful rollout of the new combined route.
+   */
+  destroyAttachedClient(client) {
+    const ids = client.pick('deviceId', 'sessionTokenId', 'clientId', 'refreshTokenId');
+    const sessionToken = this.get('sessionToken');
 
-          item.genericOS = UserAgent.toGenericOSName(item.os);
-        });
-
-        return sessions;
+    return this._fxaClient.connectedClientDestroy(sessionToken, ids)
+      .then(function () {
+        client.destroy();
+      })
+      .catch(function (err) {
+        // If the new server endpoint is not available, fall back to old methods.
+        // destroyDevice
+        // destroySession
+        // destroyOAuthApp
+        throw err;
       });
   },
 

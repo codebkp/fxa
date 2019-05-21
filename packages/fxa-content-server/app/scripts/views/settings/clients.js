@@ -102,30 +102,28 @@ const View = FormView.extend({
       item.title = item.name;
 
       if (item.scope) {
+        // XXX TODO: this shows up as something like:
+        // "Pocket - profile:display_name,profile:email,profile:uid"
+        // which doesn't seem that helpful to the user in practice...
         item.title += ' - ' + item.scope;
       }
 
       if (item.lastAccessTimeFormatted) {
-        if (item.isWebSession) {
+        if (item.clientType === Constants.CLIENT_TYPE_WEB_SESSION) {
           if (item.userAgent) {
             item.title = this.translate(
               t('Web Session, %(userAgent)s'), {userAgent: item.userAgent });
           } else {
             item.title = t('Web Session');
           }
-
           this._setLastAccessTimeFormatted(item, LAST_ACTIVITY_FORMATS.web);
-        }
-
-        if (item.isDevice) {
+        } else if (item.clientType === Constants.CLIENT_TYPE_DEVICE) {
           this._setLastAccessTimeFormatted(item, LAST_ACTIVITY_FORMATS.device);
-        }
-
-        if (item.clientType === Constants.CLIENT_TYPE_OAUTH_APP) {
+        } else if (item.clientType === Constants.CLIENT_TYPE_OAUTH_APP) {
           this._setLastAccessTimeFormatted(item, LAST_ACTIVITY_FORMATS.oauth);
         }
       } else {
-        if (item.isDevice) {
+        if (item.clientType === Constants.CLIENT_TYPE_DEVICE) {
           item.lastAccessTimeFormatted = t('Last sync time unknown');
         } else {
           // unknown lastAccessTimeFormatted or not possible to format.
@@ -225,7 +223,7 @@ const View = FormView.extend({
         clients: this._attachedClients
       });
     } else {
-      this.user.destroyAccountClient(this.user.getSignedInAccount(), client)
+      this.user.destroyAccountAttachedClient(this.user.getSignedInAccount(), client)
         .then(() => {
           if (clientType === Constants.CLIENT_TYPE_WEB_SESSION) {
             return this.user.sessionStatus().then(null, () => {
@@ -253,10 +251,7 @@ const View = FormView.extend({
 
   _fetchAttachedClients () {
     const start = Date.now();
-    return this._attachedClients.fetchClients({
-      oAuthApps: true,
-      sessions: true
-    }, this.user).then(() => {
+    return this._attachedClients.fetchClients(this.user).then(() => {
       // log the number of items
       const numOfClients = this._attachedClients.length;
       const itemsLog = 'settings.clients.items';
